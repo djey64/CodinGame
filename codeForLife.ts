@@ -2,6 +2,11 @@
  * Bring data on patient samples from the diagnosis machine to the laboratory with enough molecules to produce medicine!
  **/
 
+const SAMPLES = "SAMPLES";
+const DIAGNOSIS = "DIAGNOSIS";
+const MOLECULES = "MOLECULES";
+const LABORATORY = "LABORATORY";
+
 type AvailableMolecules = {
   availableA: number;
   availableB: number;
@@ -29,6 +34,12 @@ type Robot = {
   storageC: number;
   storageD: number;
   storageE: number;
+  expertiseA: number;
+  expertiseB: number;
+  expertiseC: number;
+  expertiseD: number;
+  expertiseE: number;
+  eta: number;
 };
 
 const projectCount: number = parseInt(readline());
@@ -59,7 +70,20 @@ const readRobot = (): Robot => {
     const expertiseD: number = parseInt(inputs[11]);
     const expertiseE: number = parseInt(inputs[12]);
     if (i === 0)
-      robot = { target, storageA, storageB, storageC, storageD, storageE };
+      robot = {
+        target,
+        storageA,
+        storageB,
+        storageC,
+        storageD,
+        storageE,
+        eta,
+        expertiseA,
+        expertiseB,
+        expertiseC,
+        expertiseD,
+        expertiseE,
+      };
   }
   return robot;
 };
@@ -105,79 +129,212 @@ const readSamples = (): Sample[] => {
   return samples;
 };
 
+const debug = (s: any) => console.error(s);
+
+const perform = (s: String) => console.log(s);
+
+const go = (r: Robot, dest: string) => {
+  if (r.target !== dest) actions.push("GOTO " + dest);
+};
+
+// action queue
+const actions: String[] = [];
+
 const totalCost = (a: Sample): number =>
   a.costA + a.costB + a.costC + a.costD + a.costE;
 const totalStorage = (r: Robot): number =>
   r.storageA + r.storageB + r.storageC + r.storageD + r.storageE;
 
-const sampleComparator = (a: Sample, b: Sample): number =>
-  totalCost(a) - totalCost(b) + a.health - b.health;
-
 const isDiagnosed = (s: Sample): boolean => s.costA !== -1;
+
+const mySamples = (samples: Sample[]): Sample[] =>
+  samples.filter((s) => s.carriedBy === 0);
+
+const sampleIsPossible = (
+  robot: Robot,
+  s: Sample,
+  availableMolecules: AvailableMolecules
+) =>
+  5 + robot.expertiseA >= s.costA &&
+  5 + robot.expertiseB >= s.costB &&
+  5 + robot.expertiseC >= s.costC &&
+  5 + robot.expertiseD >= s.costD &&
+  5 + robot.expertiseE >= s.costE;
+
+const actionIsPossible = (
+  action: String,
+  availableMolecules: AvailableMolecules
+) => {
+  if (action === "CONNECT A" && availableMolecules.availableA === 0)
+    return false;
+  if (action === "CONNECT B" && availableMolecules.availableB === 0)
+    return false;
+  if (action === "CONNECT C" && availableMolecules.availableC === 0)
+    return false;
+  if (action === "CONNECT D" && availableMolecules.availableD === 0)
+    return false;
+  if (action === "CONNECT E" && availableMolecules.availableE === 0)
+    return false;
+  return true;
+};
+
+const isComplete = (r: Robot, s: Sample) =>
+  r.storageA + r.expertiseA >= s.costA &&
+  r.storageB + r.expertiseB >= s.costB &&
+  r.storageC + r.expertiseC >= s.costC &&
+  r.storageD + r.expertiseD >= s.costD &&
+  r.storageE + r.expertiseE >= s.costE;
+
+const needSamples = (samples: Sample[]): boolean => {
+  return samples.length === 0;
+};
 
 const needDiagnosis = (samples: Sample[]): boolean =>
   samples.every((s) => s.costA === -1);
 
 const needMolecules = (robot: Robot, samples: Sample[]): boolean => {
-  return (
-    totalStorage(robot) < 10 &&
-    totalStorage(robot) !==
-      samples.map(totalCost).reduce((acc, current) => acc + current)
+  const anySampleNeed = samples.some(
+    (s) =>
+      s.costA > robot.expertiseA + robot.storageA ||
+      s.costB > robot.expertiseB + robot.storageB ||
+      s.costC > robot.expertiseC + robot.storageC ||
+      s.costD > robot.expertiseD + robot.storageD ||
+      s.costE > robot.expertiseE + robot.storageE
   );
+  return totalStorage(robot) < 10 && anySampleNeed;
 };
 
-const mySamples = (samples: Sample[]): Sample[] =>
-  samples.filter((s) => s.carriedBy === 0);
+const fetchSamples = (r: Robot) => {
+  let exp =
+    r.expertiseA + r.expertiseB + r.expertiseC + r.expertiseD + r.expertiseE;
+  go(r, SAMPLES);
+  for (let i = 0; i < 3; i++) {
+    if (exp > 8) actions.push("CONNECT 3");
+    else if (exp >= 6) actions.push("CONNECT 2");
+    else actions.push("CONNECT 1");
+  }
+};
 
-const debug = (s: any) => console.error(s);
+const fetchMolecules = (
+  r: Robot,
+  samples: Sample[],
+  availableMolecules: AvailableMolecules
+) => {
+  actions.splice(0, actions.length);
 
-// action queue
-const actions: String[] = [];
+  const sorted = [
+    { amount: availableMolecules.availableA, key: "A" },
+    { amount: availableMolecules.availableB, key: "B" },
+    { amount: availableMolecules.availableC, key: "C" },
+    { amount: availableMolecules.availableD, key: "D" },
+    { amount: availableMolecules.availableE, key: "E" },
+  ].sort((a, b) => a.amount - b.amount);
+
+  if (r.target !== "MOLECULES") {
+    go(r, MOLECULES);
+    return;
+  }
+
+  let i = 0;
+  for (const s of samples) {
+    for (const mol of sorted) {
+      const cost = "cost" + mol.key;
+      const expertise = "expertise" + mol.key;
+      const storage = "storage" + mol.key;
+      const available = "available" + mol.key;
+      const totalOfMolNeededBefore = samples
+        .filter((_, y) => y < i)
+        .map((x) => x[cost])
+        .reduce((acc, current) => acc + current, 0);
+
+      if (
+        availableMolecules[available] > 0 &&
+        s[cost] + totalOfMolNeededBefore - r[expertise] - r[storage] > 0
+      ) {
+        actions.push("CONNECT " + mol.key);
+        return;
+      }
+    }
+    i++;
+  }
+};
+
+const missingMolecules = (r: Robot, s: Sample): number =>
+  Math.max(0, s.costA - r.expertiseA) +
+  Math.max(0, s.costB - r.expertiseB) +
+  Math.max(0, s.costC - r.expertiseC) +
+  Math.max(0, s.costD - r.expertiseD) +
+  Math.max(0, s.costE - r.expertiseE);
 
 // game loop
 while (true) {
-  console.error("ici");
-  console.error("ici22");
-
   const robot = readRobot();
   const availableMolecules = readMolecules();
-  const samples = mySamples(readSamples());
+  const samples = mySamples(readSamples()).sort((a: Sample, b: Sample) => {
+    const nbA = missingMolecules(robot, a);
+    const nbB = missingMolecules(robot, b);
+
+    const scoreA = a.health / nbA;
+    const scoreB = b.health / nbB;
+
+    return scoreB - scoreA;
+  });
 
   // Write an action using console.log()
   // To debug: console.error('Debug messages...');
-  console.error("ici22");
+
+  if (robot.eta > 0) {
+    perform("WAIT");
+    continue;
+  }
 
   let noOutput = true;
-  if (actions.length > 0) {
-    console.log(actions.shift());
+  if (actions.length > 0 && actionIsPossible(actions[0], availableMolecules)) {
+    perform(actions.shift());
     noOutput = false;
   } else {
-    if (samples.length === 0) {
-      debug("samples");
-      actions.push("GOTO SAMPLES");
-      actions.push("CONNECT 2");
+    if (needSamples(samples)) {
+      fetchSamples(robot);
     } else if (needDiagnosis(samples)) {
-      debug("diagnosis");
-      actions.push("GOTO DIAGNOSIS");
+      go(robot, DIAGNOSIS);
       samples.forEach((s) => {
         if (s.costA === -1) actions.push("CONNECT " + s.sampleId);
       });
+    } else if (
+      robot.target === DIAGNOSIS &&
+      !needDiagnosis(samples) &&
+      samples.some((s) => !sampleIsPossible(robot, s, availableMolecules))
+    ) {
+      // Throw impossible samples
+      samples
+        .filter((s) => !sampleIsPossible(robot, s, availableMolecules))
+        .forEach((s) => {
+          actions.push("CONNECT " + s.sampleId);
+        });
+    } else if (
+      robot.target === LABORATORY &&
+      samples.some((s) => isComplete(robot, s))
+    ) {
+      const s = samples.find((s) => isComplete(robot, s));
+      actions.push("CONNECT " + s.sampleId);
     } else if (needMolecules(robot, samples)) {
-      debug("molecules");
-      actions.push("GOTO MOLECULES");
+      fetchMolecules(robot, samples, availableMolecules);
+      if (actions.length === 0) go(robot, LABORATORY);
+    } else if (!samples.some((s) => isComplete(robot, s))) {
+      // throw All
+      go(robot, DIAGNOSIS);
       samples.forEach((s) => {
-        for (let i = 0; i < s.costA; i++) actions.push("CONNECT A");
-        for (let i = 0; i < s.costB; i++) actions.push("CONNECT B");
-        for (let i = 0; i < s.costC; i++) actions.push("CONNECT C");
-        for (let i = 0; i < s.costD; i++) actions.push("CONNECT D");
-        for (let i = 0; i < s.costE; i++) actions.push("CONNECT E");
+        actions.push("CONNECT " + s.sampleId);
       });
     } else {
-      debug("labo");
-      actions.push("GOTO LABORATORY");
-      samples.forEach((s) => actions.push("CONNECT " + s.sampleId));
+      go(robot, LABORATORY);
     }
   }
 
-  if (actions.length > 0 && noOutput) console.log(actions.shift());
+  if (actions.length > 0 && noOutput)
+    if (actionIsPossible(actions[0], availableMolecules))
+      perform(actions.shift());
+    else {
+      perform("GOTO MOLECULES");
+    }
 }
